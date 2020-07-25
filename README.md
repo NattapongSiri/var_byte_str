@@ -15,6 +15,7 @@ The cost of using one extra `bitvec` instead of single `Vec<u8>` is one more poi
 Thus if text is short, encode it this way will only result in more bytes needed to store it.
 
 ## How to use
+1. Encode string then print it
 ```rust
 use var_byte_str::VarByteString;
 let original = "Some really long text and may contains some different language like \"คำภาษาไทยที่ใช้พื้นที่เยอะกว่าเนื้อความภาษาอังกฤษเสียอีก\".";
@@ -23,5 +24,53 @@ println!("The text is {}", encoded);
 println!("Internal structure is {:?}", encoded);
 // Remember that the original is a slice to UTF-8 encoded bytes. It have 16 bytes overhead.
 // The encoded one have 24 bytes overhead.
-println!("UTF-8 took {} bytes while encoded took {} bytes", original.len(), encoded.len());
+println!("UTF-8 took {} bytes while encoded took {} bytes", original.len() + 16, encoded.len() + 48);
+```
+2. Encode string and sometime later, decode it.
+```rust
+use var_byte_str::VarByteString;
+let original = "Some really long text and may contains some different language like \"คำภาษาไทยที่ใช้พื้นที่เยอะกว่าเนื้อความภาษาอังกฤษเสียอีก\".";
+let encoded = VarByteString::from(original);
+let decoded: String = encoded.into();
+assert_eq!(original, decoded);
+```
+3. Iterate through encoded string to obtain current byte representation underneath
+```rust
+use var_byte_str::VarByteString;
+let original = "Some really long text and may contains some different language like \"คำภาษาไทยที่ใช้พื้นที่เยอะกว่าเนื้อความภาษาอังกฤษเสียอีก\".";
+let encoded = VarByteString::from(original);
+encoded.gaps_bytes().take(11).for_each(|(sign, bytes)| {
+    // some operation on obtained sign and `SmallVec<[u8;5]>` object.
+})
+```
+4. Iterate through encoded string to obtain `"gap"` of each char
+```rust
+use var_byte_str::VarByteString;
+let original = "Some really long text and may contains some different language like \"คำภาษาไทยที่ใช้พื้นที่เยอะกว่าเนื้อความภาษาอังกฤษเสียอีก\".";
+let encoded = VarByteString::from(original);
+encoded.gaps().take(11).for_each(|gap| {
+    // some operation on gap
+})
+```
+Note: you don't actually need to encode it first. You can actually use `chars` method on `&str` to calculate `"gap"` by yourself like this:
+```rust
+let chars = original.chars();
+let first_chars = chars.next().unwrap();
+chars.fold(first_chars as i64, |prev, ch| {
+    let ch = ch as i64;
+    let gap = ch - prev;
+    // Do something with gap
+    ch 
+}) ;
+```
+However, if you already use `VarByteString`, it will save you some line of code by simply using method `gaps`
+
+5. Iterate through encoded string to obtain some char
+```rust
+use var_byte_str::VarByteString;
+let original = "Some really long text and may contains some different language like \"คำภาษาไทยที่ใช้พื้นที่เยอะกว่าเนื้อความภาษาอังกฤษเสียอีก\".";
+let encoded = VarByteString::from(original);
+encoded.chars().take(11).for_each(|gap| {
+    // some operation on char
+})
 ```
