@@ -7,7 +7,8 @@
 //! 
 //! It assume that text is usually come in as cluster where many contiguous characters came have 
 //! code point close to each other. In such case, the character is likely to take only single byte
-//! with one extra bit for sign flag. See `README.md` for reason behind it.
+//! with one extra bit for sign flag. See [README.md](https://github.com/NattapongSiri/var_byte_str/blob/master/README.md) 
+//! for reason behind it.
 //! 
 //! In order to obtain back a character, it need to iterate from the very first character.
 //! This is similar to typical UTF derivative encoding as each char may have different number of bytes.
@@ -28,6 +29,10 @@ use smallvec::SmallVec;
 #[cfg(feature="serialize")]
 use serde::{Deserialize, Serialize};
 
+/// Encoder that encode `u32` value into an encoded bytes.
+/// 
+/// # Caveat
+/// It cannot encode `0u32`. 
 struct Encoder {
     value: u32,
 }
@@ -124,6 +129,10 @@ impl VarByteString {
     #[inline]
     pub fn sign_len(&self) -> usize {
         self.sign.len()
+    }
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.buffer_len() + self.sign_len() / 8 + 1
     }
     /// Return number of bytes this object require to represent the string
     #[inline]
@@ -231,16 +240,19 @@ impl<'a> From<&str> for VarByteString {
             });
             chars.fold(first, |prev, c| {
                 let c = c as u32;
-                if c >= prev {
+                if c > prev {
                     Encoder::encode(c - prev).for_each(|v| {
                         buffer.push(v);
                     });
                     sign.push(false);
-                } else {
+                } else if c < prev {
                     Encoder::encode(prev - c).for_each(|v| {
                         buffer.push(v);
                     });
                     sign.push(true);
+                } else {
+                    buffer.push(128);
+                    sign.push(false);
                 }
                 // Encoder::encode(c - prev).for_each(|v| {
                 //     buffer.push(v)
@@ -418,16 +430,23 @@ mod tests {
     fn convert_back_forth() {
         let val = "Some value นะครับนะ";
         let var_bytes = VarByteString::from(val);
-        dbg!(var_bytes.size());
         let back : String = var_bytes.into();
-        dbg!(val.len());
         assert_eq!(val, back.as_str());
     }
 
     #[test]
-    fn display() {
+    fn short_text_display() {
         use core::fmt::Write as FmtWrite;
         let val = "Some value นะครับนะ";
+        let var_bytes = VarByteString::from(val);
+        let mut disp = String::new();
+        write!(&mut disp, "{}", var_bytes).unwrap();
+        assert_eq!(val, disp);
+    }
+    #[test]
+    fn long_text_display() {
+        use core::fmt::Write as FmtWrite;
+        let val = "Some really long text and may contains some different language like \"คำภาษาไทยที่ใช้พื้นที่เยอะกว่าเนื้อความภาษาอังกฤษเสียอีก\".";
         let var_bytes = VarByteString::from(val);
         let mut disp = String::new();
         write!(&mut disp, "{}", var_bytes).unwrap();
