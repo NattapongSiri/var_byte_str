@@ -1,7 +1,31 @@
-use bitvec::vec::BitVec;
-use bitvec::order::Lsb0;
+//! A variable byte encoded of gap to represent a string.
+//! 
+//! This crate is used mainly for large non English text that need to be represent by two or more
+//! bytes per character in UTF-8 encoding. It encode string by iterating on each character
+//! then turn it to `u32` then calculate distance of this `u32` to previous character.
+//! The distance here is called `"gap"`. Each gap is compressed by using variable byte encoding scheme.
+//! 
+//! It assume that text is usually come in as cluster where many contiguous characters came have 
+//! code point close to each other. In such case, the character is likely to take only single byte
+//! with one extra bit for sign flag. See `README.md` for reason behind it.
+//! 
+//! In order to obtain back a character, it need to iterate from the very first character.
+//! This is similar to typical UTF derivative encoding as each char may have different number of bytes.
+//! 
+//! In order to serialize the encoded string, feature flag `serialize` must be enable.
+//! 
+//! For example, in `cargo.toml`:
+//! ```
+//! var_byte_str = {version="*", features=["serialize"] default=false}
+//! ```
 
-#[cfg(feature="serde")]
+#[cfg(feature="serialize")]
+use bitvec_serde::{order::Lsb0, vec::BitVec};
+#[cfg(not(feature="serialize"))]
+use bitvec::{order::Lsb0, vec::BitVec};
+use smallvec::SmallVec;
+
+#[cfg(feature="serialize")]
 use serde::{Deserialize, Serialize};
 
 struct Encoder {
@@ -69,7 +93,10 @@ impl Encoder {
     }
 }
 
-#[cfg(feature="serde")]
+/// The core struct that represent variable byte encoded of gap of string.
+/// 
+/// See [module documentation](index.html) for more detail
+#[cfg(feature="serialize")]
 #[derive(Debug)]
 #[derive(Deserialize, Serialize)]
 pub struct VarByteString {
@@ -77,7 +104,10 @@ pub struct VarByteString {
     sign: BitVec<Lsb0, u8>
 }
 
-#[cfg(not(feature="serde"))]
+/// The core struct that represent variable byte encoded of gap of string.
+/// 
+/// See [module documentation](index.html) for more detail
+#[cfg(not(feature="serialize"))]
 #[derive(Debug)]
 pub struct VarByteString {
     buffer: Vec<u8>,
@@ -100,6 +130,32 @@ impl VarByteString {
     pub fn size(&self) -> usize {
         (self.sign_len() / 8) + 1 + self.buffer_len() + core::mem::size_of::<BitVec<Lsb0, u8>>() + core::mem::size_of::<Vec<u8>>()
     }
+    // pub fn sub_str<R>(&self, range: R) -> VarByteString where R: core::ops::RangeBounds<usize> {
+    //     let start = match range.start_bound() {
+    //         core::ops::Bound::Included(s) => *s,
+    //         core::ops::Bound::Excluded(s) => *s + 1,
+    //         core::ops::Bound::Unbounded => 0
+    //     };
+    //     let end = match range.end_bound() {
+    //         core::ops::Bound::Included(e) => *e + 1,
+    //         core::ops::Bound::Excluded(e) => *e,
+    //         core::ops::Bound::Unbounded => 0
+    //     };
+    //     let buf_start = 0;
+    //     let first_value = self.gaps().take(start).fold(0, |acc, gap| {
+    //         buf_start +=1 ;
+    //         acc + gap
+    //     });
+    //     let buffer = Vec::with_capacity(self.buffer_len() - buf_start);
+    //     buffer.extend(Encoder::encode(first_value as u32));
+    //     buffer.extend(self.buffer[buf_start..].iter());
+    //     VarByteString {
+    //         buffer,
+    //         sign: self.sign[start..end]
+    //     }
+    // }
+    /// Return an iterator of [chars](struct.Chars.html) where each iteration return
+    /// a `char` primitive converted from this representation.
     #[inline]
     pub fn chars(&self) -> Chars {
         Chars {
@@ -109,6 +165,9 @@ impl VarByteString {
             vbs: self
         }
     }
+    /// Return an iterator of [gaps](struct.Gaps.html) where each iteration return a
+    /// different between current character and previous character. The first iteration
+    /// always return a code point. It return code point "as is" from original value.
     #[inline]
     pub fn gaps(&self) -> Gaps {
         Gaps {
@@ -116,6 +175,38 @@ impl VarByteString {
             sign_cursor: 0,
             vbs: self
         }
+    }
+    /// Return an iterator of [bytes of gap](struct.GapsBytes.html) where each iteration
+    /// return a tuple of `bool` and `SmallVec<[u8; 5]>`. The `bool` part is true when the
+    /// bytes it represent should be convert to negative value. The `SmallVec<[u8; 5]>` part
+    /// contain absolute value of different in least significant byte first order.
+    #[inline]
+    pub fn gaps_bytes(&self) -> GapsBytes {
+        GapsBytes {
+            byte_cursor: 0,
+            sign_cursor: 0,
+            vbs: self
+        }
+    }
+}
+
+impl<'a> Into<String> for &'a VarByteString {
+    fn into(self) -> String {
+        let mut result = String::with_capacity(self.sign_len());
+        self.chars().for_each(|c| {
+            result.push(c);
+        });
+        result
+    }
+}
+
+impl<'a> Into<String> for VarByteString {
+    fn into(self) -> String {
+        let mut result = String::with_capacity(self.sign_len());
+        self.chars().for_each(|c| {
+            result.push(c);
+        });
+        result
     }
 }
 
@@ -167,6 +258,11 @@ impl<'a> From<&str> for VarByteString {
     }
 }
 
+/// An iterator that return a `char` using unsafe cast.
+/// 
+/// This struct assume that the encoded came from valid Unicode code point.
+/// Each iteration will calculate a code point based on encoded gap then cast
+/// it directly to `char`
 pub struct Chars<'a> {
     byte_cursor: usize,
     sign_cursor: usize,
@@ -216,6 +312,13 @@ impl<'a> core::iter::ExactSizeIterator for Chars<'a> {
     }
 }
 
+/// An iterator that return gap of each character as `i64` offset.
+/// The first return value can be cast to `char`. The subsequence
+/// value need to be added to first value in order to obtain an `i64` that
+/// can be cast to `char`.
+///
+/// This iterator doesn't check whether the return `i64` is safe to be cast
+/// to `u32` or `char`. It assume that the gap is encoded from valid Unicode code point.
 pub struct Gaps<'a> {
     byte_cursor: usize,
     sign_cursor: usize,
@@ -259,29 +362,57 @@ impl<'a> core::iter::ExactSizeIterator for Gaps<'a> {
     }
 }
 
-impl<'a> Into<String> for &'a VarByteString {
-    fn into(self) -> String {
-        let mut result = String::with_capacity(self.sign_len());
-        self.chars().for_each(|c| {
-            result.push(c);
-        });
-        result
+/// An iterator that return gap as copy of variable byte encoded along with sign boolean.
+/// Each iteration return a tuple of `bool` and `SmallVec<[u8; 5]>`. The `bool` part is true when the
+/// bytes it represent should be convert into negative value. The `SmallVec<[u8; 5]>` part
+/// contain absolute value of different in least significant byte first order.
+/// 
+/// For example, if the different is 1. The return value will be (false, [1]). If the different is -1,
+/// the return value will be (true, [1]).
+/// 
+/// It has the same assumption as [Gaps](struct.Gaps.html). It doesn't check validity of value.
+pub struct GapsBytes<'a> {
+    byte_cursor: usize,
+    sign_cursor: usize,
+    vbs: &'a VarByteString
+}
+
+impl<'a> Iterator for GapsBytes<'a> {
+    /// Max number of bytes needed to store largest gap between two Unicode characters is 33 bits.
+    /// Since variable byte encoding have 7 bits available per byte, so largest gap can be represent by 5 bytes.
+    type Item = (bool, SmallVec<[u8; 5]>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.sign_cursor < self.vbs.sign_len() {
+            let sign = self.vbs.sign[self.sign_cursor];
+            self.sign_cursor += 1;
+
+            let mut bytes = SmallVec::with_capacity(5);
+            let len = self.vbs.buffer[self.byte_cursor..].iter().take_while(|b| **b < 128).fold(0, |acc, b| {
+                bytes.push(*b);
+                acc + 1
+            });
+            bytes.push(self.vbs.buffer[self.byte_cursor + len]);
+            self.byte_cursor += len + 1;
+
+            Some((sign, bytes))
+        } else {
+            None
+        }
     }
 }
 
-impl<'a> Into<String> for VarByteString {
-    fn into(self) -> String {
-        let mut result = String::with_capacity(self.sign_len());
-        self.chars().for_each(|c| {
-            result.push(c);
-        });
-        result
+impl<'a> core::iter::FusedIterator for GapsBytes<'a> {}
+impl<'a> core::iter::ExactSizeIterator for GapsBytes<'a> {
+    fn len(&self) -> usize {
+        self.vbs.sign_len()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use smallvec::smallvec;
 
     #[test]
     fn convert_back_forth() {
@@ -308,6 +439,14 @@ mod tests {
         let var_bytes = VarByteString::from(val);
         let expected = vec![b'a' as i64, 1, -1, 3488, 1, -3489];
         let gaps: Vec<i64> = var_bytes.gaps().collect();
+        assert_eq!(expected, gaps);
+    }
+    #[test]
+    fn gaps_bytes() {
+        let val = "abaกขa";
+        let var_bytes = VarByteString::from(val);
+        let expected = vec![(false, smallvec!(b'a' + 128 as u8)), (false, smallvec![1 + 128]), (true, smallvec![1 + 128]), (false, smallvec![32, 27 + 128]), (false, smallvec![1 + 128]), (true, smallvec![33, 27 + 128])];
+        let gaps: Vec<(bool, SmallVec<[u8; 5]>)> = var_bytes.gaps_bytes().collect();
         assert_eq!(expected, gaps);
     }
 }
