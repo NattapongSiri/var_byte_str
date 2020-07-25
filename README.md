@@ -15,6 +15,14 @@ The cost of using one extra `bitvec` instead of single `Vec<u8>` is one more poi
 Thus if text is short, encode it this way will only result in more bytes needed to store it.
 
 ## How to use
+Put following line into `cargo.toml`
+```toml
+var_byte_str="*"
+```
+or if you need to serialize/deserialize the encoded string, put following line into `cargo.toml`
+```toml
+var_byte_str={version="*", default=false, features=["serialize"]}
+```
 1. Encode string then print it
 ```rust
 use var_byte_str::VarByteString;
