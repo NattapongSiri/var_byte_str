@@ -1,7 +1,12 @@
 [package]
 name = "var_byte_str"
+description="Variable byte encoding string by using gap instead of code point"
+categories=["compression", "encoding"]
+keywords=["variable", "byte", "encoding", "gap"]
+readme="README.md"
+license="BSD-2-Clause"
 version = "0.1.0"
-authors = ["nattapongs <nattapong.sirilappanich2@ibm.com>"]
+authors = ["Nattapong Sirilappanich <nattapong.s@gmail.com>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
