@@ -99,3 +99,13 @@ let encoded = VarByteString::from(original);
 let other = original + " extra text";
 assert!(encoded < other);
 ```
+
+8. Now this object can be a hash key like regular string
+```rust
+use var_byte_str::VarByteString;
+let original = "Some really long text and may contains some different language like \"คำภาษาไทยที่ใช้พื้นที่เยอะกว่าเนื้อความภาษาอังกฤษเสียอีก\".";
+let encoded = VarByteString::from(original);
+let mut hm = HashMap::new();
+hm.insert(encoded.clone(), 1);
+assert_eq!(hm.get(&encoded), Some(&1));
+```

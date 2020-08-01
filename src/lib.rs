@@ -324,7 +324,7 @@ impl<'a> Iterator for MSBCharsEncoder<'a> {
 /// 
 /// See [module documentation](index.html) for more detail
 #[cfg(feature="serialize")]
-#[derive(Deserialize, Debug, Hash, PartialEq, Serialize)]
+#[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
 pub struct VarByteString {
     buffer: Vec<u8>,
     sign: BitVec<Lsb0, u8>
@@ -334,7 +334,7 @@ pub struct VarByteString {
 /// 
 /// See [module documentation](index.html) for more detail
 #[cfg(not(feature="serialize"))]
-#[derive(Debug, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct VarByteString {
     buffer: Vec<u8>,
     sign: BitVec<Lsb0, u8>
@@ -815,5 +815,14 @@ mod tests {
         assert!(thai_vbs > s6);
         assert!(thai_vbs > s7);
         assert!(vbs > s7);
+    }
+
+    #[test]
+    fn hash_obj() {
+        let original = "Some really long text and may contains some different language like \"คำภาษาไทยที่ใช้พื้นที่เยอะกว่าเนื้อความภาษาอังกฤษเสียอีก\".";
+        let encoded = VarByteString::from(original);
+        let mut hm = std::collections::HashMap::new();
+        hm.insert(encoded.clone(), 1);
+        assert_eq!(hm.get(&encoded), Some(&1));
     }
 }
