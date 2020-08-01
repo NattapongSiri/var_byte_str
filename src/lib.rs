@@ -16,7 +16,7 @@
 //! In order to serialize the encoded string, feature flag `serialize` must be enable.
 //! 
 //! For example, in `cargo.toml`:
-//! ```
+//! ```toml
 //! var_byte_str = {version="*", features=["serialize"] default=false}
 //! ```
 
@@ -30,71 +30,293 @@ use smallvec::SmallVec;
 use serde::{Deserialize, Serialize};
 
 /// Encoder that encode `u32` value into an encoded bytes.
-/// 
-/// # Caveat
-/// It cannot encode `0u32`. 
-struct Encoder {
-    value: u32,
+/// This iterator return least significant byte first.
+/// The last byte will contain a flag on 8th bit to discriminate
+/// a most significant byte.
+#[derive(Copy, Clone, Debug)]
+struct LSBEncoder {
+    /// Need to wrap value within `Option` so it can encode `0u32` too
+    value: Option<u32>,
 }
 
-impl Iterator for Encoder {
+impl LSBEncoder {
+    /// Create this encoder with given `u32` value.
+    #[inline]
+    pub fn encode(value: u32) -> LSBEncoder {
+        LSBEncoder {
+            value: Some(value),
+        }
+    }
+}
+
+impl Iterator for LSBEncoder {
     type Item = u8;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.value {
-            0 => None,
-            // -64..=-1 => {
-            //     let r = self.value + 192;
-            //     self.value = 0;
+        if let Some(value) = self.value {
+            match value {
+                0..=127 => {
+                    let r = value + 128;
+                    self.value = None;
 
-            //     Some(r as u8)
-            // },
-            // -128..=-65 => {
-            //     let r = self.value & 63;
-            //     self.value >>= 6;
-            //     Some(r as u8)
-            // },
-            // 1..=63 => {
-            //     let r = self.value + 128;
-            //     self.value = 0;
+                    Some(r as u8)
+                },
+                _ => {
+                    let r = value & 127;
+                    self.value.replace(value >> 7);
 
-            //     Some(r as u8)
-            // },
-            // 64..=127 => {
-            //     let r = self.value & 63;
-            //     self.value >>= 6;
-
-            //     Some(r as u8)
-            // },
-            1..=127 => {
-                let r = self.value + 128;
-                self.value = 0;
-
-                Some(r as u8)
-            },
-            _ => {
-                let r = self.value & 127;
-                self.value >>= 7;
-
-                Some(r as u8)
+                    Some(r as u8)
+                }
             }
+        } else {
+            None
         }
     }
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        (1, Some(4))
+        let bits = 32 - self.value.map_or(32, |v| v.leading_zeros());
+        let max = if bits > 0 {
+            (bits + 6) / 7 // A round up integer div
+        } else {
+            0
+        } as usize;
+        (max, Some(max))
     }
 }
 
-impl core::iter::FusedIterator for Encoder {}
-
-impl Encoder {
+/// Convert from LSBEncoder into MSBEncoder
+impl From<MSBEncoder> for LSBEncoder {
     #[inline]
-    pub fn encode(value: u32) -> Encoder {
-        Encoder {
-            value,
+    fn from(e: MSBEncoder) -> LSBEncoder {
+        LSBEncoder {
+            value: e.value
         }
+    }
+}
+
+impl ExactSizeIterator for LSBEncoder {}
+impl core::iter::FusedIterator for LSBEncoder {}
+
+/// Encoder that encode `u32` value into an encoded bytes similar to 
+/// [LSBEncoder](struct.LSBEncoder.html) but return most significant byte first.
+/// 
+/// The first byte will be flagged byte. 8th bit will be 1 to discriminate a 
+/// most significant byte.
+/// 
+/// It is expected that this encoder will be a bit slower than [LSBEncoder](struct.LSBEncoder.html)
+/// due to nature of it that need to check on each iteration whether it should flag the byte
+/// as MSB. This is not need with [LSBEncoder](struct.LSBEncoder.html) since only
+/// last byte will have the flag.
+#[derive(Copy, Clone, Debug)]
+struct MSBEncoder {
+    /// A flag so to check whether the most significant bit is already return
+    flagged: bool,
+    value: Option<u32>,
+}
+
+impl MSBEncoder {
+    /// Create this encoder from given `u32` value.
+    #[inline]
+    pub fn encode(value: u32) -> MSBEncoder {
+        MSBEncoder {
+            flagged: false,
+            value: Some(value)
+        }
+    }
+}
+
+impl Iterator for MSBEncoder {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(ref mut v) = self.value {
+            let leading_0 = v.leading_zeros();
+            match leading_0 {
+                0..=3 => {
+                    let result = if self.flagged {
+                        Some(v.wrapping_shr(28) as u8)
+                    } else {
+                        self.flagged = true;
+                        Some(128 + v.wrapping_shr(28) as u8)
+                    };
+                    *v &= 0b0000_1111_1111_1111_1111_1111_1111_1111;
+                    result
+                },
+                4..=10 => {
+                    let result = if self.flagged {
+                        Some(v.wrapping_shr(21) as u8)
+                    } else {
+                        self.flagged = true;
+                        Some(128 + v.wrapping_shr(21) as u8)
+                    };
+                    *v &= 0b0000_0000_0001_1111_1111_1111_1111_1111;
+                    result
+                },
+                11..=17 => {
+                    let result = if self.flagged {
+                        Some(v.wrapping_shr(14) as u8)
+                    } else {
+                        self.flagged = true;
+                        Some(128 + v.wrapping_shr(14) as u8)
+                    };
+                    *v &= 0b0000_0000_0000_0000_0011_1111_1111_1111;
+                    result
+                },
+                18..=24 => {
+                    let result = if self.flagged {
+                        Some(v.wrapping_shr(7) as u8)
+                    } else {
+                        self.flagged = true;
+                        Some(128 + v.wrapping_shr(7) as u8)
+                    };
+                    *v &= 0b0000_0000_0000_0000_0000_0000_0111_1111;
+                    result
+                },
+                25..=31 => {
+                    let result = if self.flagged {
+                        Some(*v as u8)
+                    } else {
+                        self.flagged = true;
+                        Some(128 + *v as u8)
+                    };
+                    self.value = None;
+                    result
+                },
+                32 => {
+                    self.value = None;
+                    if self.flagged {
+                        Some(0)
+                    } else {
+                        Some(128)
+                    }
+                },
+                _ => {
+                    // The code point is only `u32`, we'd have lesser than 32 bit
+                    unreachable!()
+                }
+            }
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let bits = 32 - self.value.map_or(32, |v| v.leading_zeros());
+        let max = if bits > 0 {
+            (bits + 6) / 7 // A round up integer div
+        } else {
+            0
+        } as usize;
+        (max, Some(max))
+    }
+}
+/// Convert from LSBEncoder into MSBEncoder
+impl From<LSBEncoder> for MSBEncoder {
+    #[inline]
+    fn from(e: LSBEncoder) -> MSBEncoder {
+        MSBEncoder {
+            flagged: false,
+            value: e.value
+        }
+    }
+}
+
+impl ExactSizeIterator for MSBEncoder {}
+impl core::iter::FusedIterator for MSBEncoder {}
+
+/// Encode other string based on chars into gaps.
+/// 
+/// On each iteration over this object, it yield an [LSBEncoder](struct.LSBEncoder.html) with
+/// associated sign boolean.
+struct CharsEncoder<'a> {
+    prev: Option<u32>,
+    chars: std::str::Chars<'a>
+}
+
+impl<'a> CharsEncoder<'a> {
+    /// Construct an iterator that yield "variable bytes gap" encoded of each
+    /// character in given `&str`
+    #[inline]
+    pub fn encode(s: &str) -> CharsEncoder {
+        CharsEncoder {
+            prev: None,
+            chars: s.chars()
+        }
+    }
+}
+
+impl<'a> Iterator for CharsEncoder<'a> {
+    type Item=(bool, LSBEncoder);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(c) = self.chars.next() {
+            let c = c as u32;
+            if let Some(p) = self.prev.replace(c) {
+                if c < p {
+                    Some((true, LSBEncoder::encode(p - c)))
+                } else {
+                    Some((false, LSBEncoder::encode(c - p)))
+                }
+            } else {
+                Some((false, LSBEncoder::encode(c)))
+            }
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.chars.size_hint()
+    }
+}
+/// Encode other string based on chars into gaps.
+/// 
+/// On each iteration over this object, it yield an [LSBEncoder](struct.LSBEncoder.html) with
+/// associated sign boolean.
+#[derive(Debug)]
+struct MSBCharsEncoder<'a> {
+    prev: Option<u32>,
+    chars: std::str::Chars<'a>
+}
+
+impl<'a> MSBCharsEncoder<'a> {
+    /// Construct an iterator that yield "variable bytes encoded" gap of each character of
+    /// given `&str`
+    #[inline]
+    pub fn encode(s: &str) -> MSBCharsEncoder {
+        MSBCharsEncoder {
+            prev: None,
+            chars: s.chars()
+        }
+    }
+}
+
+impl<'a> Iterator for MSBCharsEncoder<'a> {
+    type Item=(bool, MSBEncoder);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(c) = self.chars.next() {
+            let c = c as u32;
+            if let Some(p) = self.prev.replace(c) {
+                if c < p {
+                    Some((true, MSBEncoder::encode(p - c)))
+                } else {
+                    Some((false, MSBEncoder::encode(c - p)))
+                }
+            } else {
+                Some((false, MSBEncoder::encode(c)))
+            }
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.chars.size_hint()
     }
 }
 
@@ -102,8 +324,7 @@ impl Encoder {
 /// 
 /// See [module documentation](index.html) for more detail
 #[cfg(feature="serialize")]
-#[derive(Debug)]
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Debug, Hash, PartialEq, Serialize)]
 pub struct VarByteString {
     buffer: Vec<u8>,
     sign: BitVec<Lsb0, u8>
@@ -113,7 +334,7 @@ pub struct VarByteString {
 /// 
 /// See [module documentation](index.html) for more detail
 #[cfg(not(feature="serialize"))]
-#[derive(Debug)]
+#[derive(Debug, Hash, PartialEq)]
 pub struct VarByteString {
     buffer: Vec<u8>,
     sign: BitVec<Lsb0, u8>
@@ -199,6 +420,7 @@ impl VarByteString {
     }
 }
 
+/// Add a way to convert back this object into `String`
 impl<'a> Into<String> for &'a VarByteString {
     fn into(self) -> String {
         let mut result = String::with_capacity(self.sign_len());
@@ -209,6 +431,7 @@ impl<'a> Into<String> for &'a VarByteString {
     }
 }
 
+/// Add a way to consume this object and turn it into `String`
 impl<'a> Into<String> for VarByteString {
     fn into(self) -> String {
         let mut result = String::with_capacity(self.sign_len());
@@ -219,6 +442,89 @@ impl<'a> Into<String> for VarByteString {
     }
 }
 
+/// Allow [VarByteString](struct.VarByteString.html) to allow using operator `==` with `&str`
+impl<S> core::cmp::PartialEq<S> for VarByteString where S: core::borrow::Borrow<str> {
+    /// It compare with &str by encodes other string into variable gap bytes then compare it to self.
+    fn eq(&self, other: &S) -> bool {
+        // We can either encode other or decode self. Both operation is expensive.
+        // Encode other may be less expensive as it may have less byte to compare.
+        CharsEncoder::encode(other.borrow()).zip(self.gaps_bytes()).all(|(rhs, lhs)| {
+            if rhs.0 == lhs.0 {
+                rhs.1.eq(lhs.1)
+            } else {
+                false
+            }
+        })
+    }
+}
+
+/// Allow [VarByteString](struct.VarByteString.html) to be comparable with `&str`
+impl<S> core::cmp::PartialOrd<S> for VarByteString where S: core::borrow::Borrow<str> {
+    /// It compare by encode other as `&str` into variable gap bytes and compare based on sign and bytes
+    fn partial_cmp(&self, other: &S) -> Option<core::cmp::Ordering> {
+        let mut var_bytes = self.gaps_bytes();
+        let mut last_cmp = core::cmp::Ordering::Less;
+        for (other_sign, other_encoded) in MSBCharsEncoder::encode(other.borrow()) {
+            if let Some((sign, bytes)) = var_bytes.next() {
+                dbg!(other_sign, sign, &other_encoded, &bytes);
+                if sign {
+                    // self is signed
+                    if other_sign {
+                        // other is also signed
+
+                        // Need to compare other to self so result is reversed.
+                        // It is signed comparison, if it is self compare to other,
+                        // result will need to be reversed. 
+                        // Since it is already reverse, we return compare result as is.
+                        last_cmp = if other_encoded.len() == bytes.len() {
+                            other_encoded.cmp(bytes.into_iter().rev())
+                        } else {
+                            other_encoded.len().cmp(&bytes.len())
+                        };
+
+                        match last_cmp {
+                            core::cmp::Ordering::Equal => (),
+                            _ => break
+                        }
+                    } else {
+                        dbg!("Self is less than other");
+                        last_cmp = core::cmp::Ordering::Less;
+                        break
+                    }
+                } else {
+                    // self is unsign
+                    if other_sign {
+                        // other is sign
+                        last_cmp = core::cmp::Ordering::Greater;
+                        break;
+                    } else {
+                        // other is also unsign
+                        dbg!(other_encoded.len(), bytes.len());
+                        last_cmp = if other_encoded.len() == bytes.len() {
+                            // Need to reverse result because we compare other to self.
+                            // It is reverse comparison.
+                            other_encoded.cmp(bytes.into_iter().rev()).reverse()
+                        } else {
+                            bytes.len().cmp(&other_encoded.len())
+                        };
+                        dbg!(last_cmp);
+
+                        match last_cmp {
+                            core::cmp::Ordering::Equal => (),
+                            _ => break
+                        }
+                    }
+                }
+            } else {
+                // self is exhausted while other is not and all prior comparison is equals
+                last_cmp = core::cmp::Ordering::Less;
+                break;
+            }
+        }
+        Some(last_cmp)
+    }
+}
+
 impl core::fmt::Display for VarByteString {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let val : String = self.into();
@@ -226,42 +532,19 @@ impl core::fmt::Display for VarByteString {
     }
 }
 
-impl<'a> From<&str> for VarByteString {
-    fn from(s: &str) -> VarByteString {
-        let mut chars = s.chars();
+/// Add a way to construct this object from any kind of `str`
+impl<S> From<S> for VarByteString where S: core::borrow::Borrow<str> {
+    fn from(s: S) -> VarByteString {
+        let s = s.borrow();
         let mut buffer = Vec::with_capacity(s.len());
         let mut sign = BitVec::with_capacity(s.len());
 
-        if let Some(first) = chars.next() {
-            let first = first as u32;
-            Encoder::encode(first).for_each(|b| {
-                buffer.push(b);
-                sign.push(false);
+        CharsEncoder::encode(s).for_each(|(cur_sign, encoded)| {
+            encoded.for_each(|v| {
+                buffer.push(v);
             });
-            chars.fold(first, |prev, c| {
-                let c = c as u32;
-                if c > prev {
-                    Encoder::encode(c - prev).for_each(|v| {
-                        buffer.push(v);
-                    });
-                    sign.push(false);
-                } else if c < prev {
-                    Encoder::encode(prev - c).for_each(|v| {
-                        buffer.push(v);
-                    });
-                    sign.push(true);
-                } else {
-                    buffer.push(128);
-                    sign.push(false);
-                }
-                // Encoder::encode(c - prev).for_each(|v| {
-                //     buffer.push(v)
-                // });
-
-                // c as i64
-                c as u32
-            });
-        }
+            sign.push(cur_sign);
+        });
 
         VarByteString {
             buffer,
@@ -467,5 +750,70 @@ mod tests {
         let expected = vec![(false, smallvec!(b'a' + 128 as u8)), (false, smallvec![1 + 128]), (true, smallvec![1 + 128]), (false, smallvec![32, 27 + 128]), (false, smallvec![1 + 128]), (true, smallvec![33, 27 + 128])];
         let gaps: Vec<(bool, SmallVec<[u8; 5]>)> = var_bytes.gaps_bytes().collect();
         assert_eq!(expected, gaps);
+    }
+    #[test]
+    fn msb_encode_int() {
+        use smallvec::smallvec;
+        let max: SmallVec<[u8; 5]> = smallvec![0b1000_1111, 127, 127, 127, 127];
+        MSBEncoder::encode(u32::MAX).enumerate().for_each(|(i, byte)| {
+            assert_eq!(byte, max[i]);
+        });
+        let min: SmallVec<[u8; 1]> = smallvec![128];
+        MSBEncoder::encode(0).enumerate().for_each(|(i, byte)| {
+            assert_eq!(byte, min[i]);
+        });
+        let imin: SmallVec<[u8; 5]> = smallvec![0b1000_0111, 127, 127, 127, 127];
+        MSBEncoder::encode(i32::MAX as u32).enumerate().for_each(|(i, byte)| {
+            assert_eq!(byte, imin[i]);
+        });
+        let one: SmallVec<[u8; 1]> = smallvec![0b1000_0001];
+        MSBEncoder::encode(1).enumerate().for_each(|(i, byte)| {
+            assert_eq!(byte, one[i]);
+        });
+        let thousand: SmallVec<[u8; 2]> = smallvec![0b1000_0111, 0b0110_1000];
+        MSBEncoder::encode(1000).enumerate().for_each(|(i, byte)| {
+            assert_eq!(byte, thousand[i]);
+        });
+        let hundredthousand: SmallVec<[u8; 3]> = smallvec![0b1000_0110, 0b0000_1101, 0b0010_0000];
+        MSBEncoder::encode(100_000).enumerate().for_each(|(i, byte)| {
+            assert_eq!(byte, hundredthousand[i]);
+        });
+        let tenmillion: SmallVec<[u8; 4]> = smallvec![0b1000_0100, 0b0110_0010, 0b0010_1101 ,0];
+        MSBEncoder::encode(10_000_000).enumerate().for_each(|(i, byte)| {
+            assert_eq!(byte, tenmillion[i]);
+        });
+    }
+
+    #[test]
+    fn eq_str() {
+        let s = "abcba axa ทดสอบด้วยคำภาษาไทย";
+        let not = "bbb";
+        let vbs = VarByteString::from(s);
+        assert_eq!(vbs, s);
+        assert_ne!(vbs, not);
+    }
+
+    #[test]
+    fn cmp_str() {
+        let s1 = "abc";
+        let s2 = "abd";
+        let s3 = "bbc";
+        let s5 = "กก ";
+        let s6 = "ก ก";
+        let s7 = " ก ก";
+        let vbs = VarByteString::from(s1);
+        assert!(vbs < s2);
+        assert!(s3 > s1);
+        assert_eq!(s1 > s3, false);
+        assert!(s1 < s5);
+        assert_eq!(s1 == s3, false);
+        let thai_vbs = VarByteString::from(s5);
+        assert!(thai_vbs > s1);
+        assert!(thai_vbs > s2);
+        assert!(thai_vbs > s3);
+        assert!(thai_vbs == s5);
+        assert!(thai_vbs > s6);
+        assert!(thai_vbs > s7);
+        assert!(vbs > s7);
     }
 }

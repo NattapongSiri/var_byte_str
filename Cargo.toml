@@ -5,7 +5,8 @@ categories=["compression", "encoding"]
 keywords=["variable", "byte", "encoding", "gap"]
 readme="README.md"
 license="BSD-2-Clause"
-version = "0.1.0"
+version = "0.1.1"
+repository = "https://github.com/NattapongSiri/var_byte_str.git"
 authors = ["Nattapong Sirilappanich <nattapong.s@gmail.com>"]
 edition = "2018"
 

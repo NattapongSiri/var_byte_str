@@ -48,7 +48,7 @@ use var_byte_str::VarByteString;
 let original = "Some really long text and may contains some different language like \"คำภาษาไทยที่ใช้พื้นที่เยอะกว่าเนื้อความภาษาอังกฤษเสียอีก\".";
 let encoded = VarByteString::from(original);
 encoded.gaps_bytes().take(11).for_each(|(sign, bytes)| {
-    // some operation on obtained sign and `SmallVec<[u8;5]>` object.
+    // some operation on obtained sign boolean and `SmallVec<[u8;5]>` object.
 })
 ```
 4. Iterate through encoded string to obtain `"gap"` of each char
@@ -78,7 +78,24 @@ However, if you already use `VarByteString`, it will save you some line of code 
 use var_byte_str::VarByteString;
 let original = "Some really long text and may contains some different language like \"คำภาษาไทยที่ใช้พื้นที่เยอะกว่าเนื้อความภาษาอังกฤษเสียอีก\".";
 let encoded = VarByteString::from(original);
-encoded.chars().take(11).for_each(|gap| {
+encoded.chars().take(11).for_each(|c| {
     // some operation on char
 })
+```
+
+6. Compare encoded string to any Rust's string
+```rust
+use var_byte_str::VarByteString;
+let original = "Some really long text and may contains some different language like \"คำภาษาไทยที่ใช้พื้นที่เยอะกว่าเนื้อความภาษาอังกฤษเสียอีก\".";
+let encoded = VarByteString::from(original);
+assert!(encoded == original);
+```
+
+7. Compare encoded string to any Rust's string to check binary order
+```rust
+use var_byte_str::VarByteString;
+let original = "Some really long text and may contains some different language like \"คำภาษาไทยที่ใช้พื้นที่เยอะกว่าเนื้อความภาษาอังกฤษเสียอีก\".";
+let encoded = VarByteString::from(original);
+let other = original + " extra text";
+assert!(encoded < other);
 ```
