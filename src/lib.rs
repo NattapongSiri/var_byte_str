@@ -466,7 +466,6 @@ impl<S> core::cmp::PartialOrd<S> for VarByteString where S: core::borrow::Borrow
         let mut last_cmp = core::cmp::Ordering::Less;
         for (other_sign, other_encoded) in MSBCharsEncoder::encode(other.borrow()) {
             if let Some((sign, bytes)) = var_bytes.next() {
-                dbg!(other_sign, sign, &other_encoded, &bytes);
                 if sign {
                     // self is signed
                     if other_sign {
@@ -487,7 +486,6 @@ impl<S> core::cmp::PartialOrd<S> for VarByteString where S: core::borrow::Borrow
                             _ => break
                         }
                     } else {
-                        dbg!("Self is less than other");
                         last_cmp = core::cmp::Ordering::Less;
                         break
                     }
@@ -499,7 +497,6 @@ impl<S> core::cmp::PartialOrd<S> for VarByteString where S: core::borrow::Borrow
                         break;
                     } else {
                         // other is also unsign
-                        dbg!(other_encoded.len(), bytes.len());
                         last_cmp = if other_encoded.len() == bytes.len() {
                             // Need to reverse result because we compare other to self.
                             // It is reverse comparison.
@@ -507,7 +504,6 @@ impl<S> core::cmp::PartialOrd<S> for VarByteString where S: core::borrow::Borrow
                         } else {
                             bytes.len().cmp(&other_encoded.len())
                         };
-                        dbg!(last_cmp);
 
                         match last_cmp {
                             core::cmp::Ordering::Equal => (),
