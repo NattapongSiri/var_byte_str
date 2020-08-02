@@ -21,9 +21,9 @@
 //! ```
 
 #[cfg(feature="serialize")]
-use bitvec_serde::{order::Lsb0, slice::BitSlice, vec::BitVec};
+use bitvec_serde::{boxed::BitBox, order::Lsb0, slice::BitSlice, vec::BitVec};
 #[cfg(not(feature="serialize"))]
-use bitvec::{order::Lsb0, slice::BitSlice, vec::BitVec};
+use bitvec::{boxed::BitBox, order::Lsb0, slice::BitSlice, vec::BitVec};
 use smallvec::SmallVec;
 
 #[cfg(feature="serialize")]
@@ -844,7 +844,10 @@ mod tests {
     }
     #[test]
     fn raw_slice() {
+        #[cfg(not(feature="serialize"))]
         use bitvec::bitvec;
+        #[cfg(feature="serialize")]
+        use bitvec_serde::bitvec;
         let val = "abaกขa";
         let var_bytes = VarByteString::from(val);
         let expected_bytes = vec![
@@ -863,7 +866,6 @@ mod tests {
         assert_eq!(var_bytes.raw_slice(..5), (&expected_sign[..5], &expected_bytes[..6]));
         assert_eq!(var_bytes.raw_slice(2..5), (&expected_sign[2..5], &expected_bytes[2..6]));
         assert_eq!(var_bytes.raw_slice(4..5), (&expected_sign[4..5], &expected_bytes[5..6]));
-        assert_eq!(var_bytes.raw_slice(..10), (&expected_sign[4..5], &expected_bytes[5..6]));
     }
     #[test]
     #[should_panic(expected="Index out of bound. End is greater than number of characters")]
