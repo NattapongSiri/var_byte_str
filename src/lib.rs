@@ -863,6 +863,21 @@ mod tests {
         assert_eq!(var_bytes.raw_slice(..5), (&expected_sign[..5], &expected_bytes[..6]));
         assert_eq!(var_bytes.raw_slice(2..5), (&expected_sign[2..5], &expected_bytes[2..6]));
         assert_eq!(var_bytes.raw_slice(4..5), (&expected_sign[4..5], &expected_bytes[5..6]));
+        assert_eq!(var_bytes.raw_slice(..10), (&expected_sign[4..5], &expected_bytes[5..6]));
+    }
+    #[test]
+    #[should_panic(expected="Index out of bound. End is greater than number of characters")]
+    fn raw_slice_panic_1() {
+        let val = "abaกขa";
+        let var_bytes = VarByteString::from(val);
+        var_bytes.raw_slice(..100);
+    }
+    #[test]
+    #[should_panic(expected="Index out of bound. Start is greater than number of characters")]
+    fn raw_slice_panic_2() {
+        let val = "abaกขa";
+        let var_bytes = VarByteString::from(val);
+        var_bytes.raw_slice(50..);
     }
     #[test]
     fn msb_encode_int() {
