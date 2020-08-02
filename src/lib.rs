@@ -375,34 +375,44 @@ impl VarByteString {
         let end = match range.end_bound() {
             core::ops::Bound::Included(e) => *e + 1,
             core::ops::Bound::Excluded(e) => *e,
-            core::ops::Bound::Unbounded => 0
+            core::ops::Bound::Unbounded => self.sign_len()
         };
         assert!(start < self.sign_len(), "Index out of bound. Start is greater than number of characters");
-        assert!(end < self.sign_len(), "Index out of bound. End is greater than number of characters");
+        assert!(end <= self.sign_len(), "Index out of bound. End is greater than number of characters");
 
-        let mut buf_start = 0;
-
-        for b in &self.buffer {
-            if *b > 128 {
-                buf_start += 1;
-
-                if buf_start == start {
-                    break
+        let buf_start = if start != 0 {
+            let mut char_count = 0;
+            let mut temp_start = 0;
+            for b in self.buffer.iter() {
+                temp_start += 1;
+                if *b > 128 {
+                    char_count += 1;
+                    if char_count == start {
+                        break;
+                    }
                 }
             }
-        }
+            temp_start
+        } else {
+            0
+        };
 
-        let mut buf_end = buf_start;
-
-        for b in &self.buffer[buf_start..] {
-            if *b > 128 {
-                buf_end += 1;
-
-                if buf_end == end {
-                    break
+        let buf_end = if end != self.sign.len() {
+            let mut char_count = start;
+            let mut temp_end = buf_start;
+            for b in &self.buffer[buf_start..] {
+                temp_end += 1;
+                if *b > 128 {
+                    char_count += 1;
+                    if char_count == end {
+                        break
+                    }
                 }
             }
-        }
+            temp_end
+        } else {
+            self.buffer_len()
+        };
 
         (&self.sign[start..end], &self.buffer[buf_start..buf_end])
     }
@@ -831,6 +841,28 @@ mod tests {
         let expected = vec![(false, smallvec!(b'a' + 128 as u8)), (false, smallvec![1 + 128]), (true, smallvec![1 + 128]), (false, smallvec![32, 27 + 128]), (false, smallvec![1 + 128]), (true, smallvec![33, 27 + 128])];
         let gaps: Vec<(bool, SmallVec<[u8; 5]>)> = var_bytes.gaps_bytes().collect();
         assert_eq!(expected, gaps);
+    }
+    #[test]
+    fn raw_slice() {
+        use bitvec::bitvec;
+        let val = "abaกขa";
+        let var_bytes = VarByteString::from(val);
+        let expected_bytes = vec![
+            b'a' + 128 as u8, // char 0 at index 0
+            1 + 128, // char 1 at index 1
+            1 + 128, // char 2 at index 2
+            32, 27 + 128,  // char 3 at index 3
+            1 + 128, // char 4 at index 5
+            33, 27 + 128 // char 5 at index 6
+        ];
+        let expected_sign = bitvec![Lsb0, u8; 0, 0, 1, 0, 0, 1];
+
+        assert_eq!(var_bytes.raw_slice(0..), (expected_sign.as_bitslice(), expected_bytes.as_slice()));
+        assert_eq!(var_bytes.raw_slice(..var_bytes.sign_len()), (expected_sign.as_bitslice(), expected_bytes.as_slice()));
+        assert_eq!(var_bytes.raw_slice(1..), (&expected_sign[1..], &expected_bytes[1..]));
+        assert_eq!(var_bytes.raw_slice(..5), (&expected_sign[..5], &expected_bytes[..6]));
+        assert_eq!(var_bytes.raw_slice(2..5), (&expected_sign[2..5], &expected_bytes[2..6]));
+        assert_eq!(var_bytes.raw_slice(4..5), (&expected_sign[4..5], &expected_bytes[5..6]));
     }
     #[test]
     fn msb_encode_int() {
