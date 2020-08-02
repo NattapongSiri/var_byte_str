@@ -324,7 +324,7 @@ impl<'a> Iterator for MSBCharsEncoder<'a> {
 /// 
 /// See [module documentation](index.html) for more detail
 #[cfg(feature="serialize")]
-#[derive(Clone, Deserialize, Debug, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Deserialize, Debug, Eq, Hash, Serialize)]
 pub struct VarByteString {
     buffer: Vec<u8>,
     sign: BitVec<Lsb0, u8>
@@ -334,7 +334,7 @@ pub struct VarByteString {
 /// 
 /// See [module documentation](index.html) for more detail
 #[cfg(not(feature="serialize"))]
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash)]
 pub struct VarByteString {
     buffer: Vec<u8>,
     sign: BitVec<Lsb0, u8>
@@ -418,6 +418,33 @@ impl VarByteString {
             vbs: self
         }
     }
+
+    /// Find a common prefix between itself and other.
+    /// 
+    /// # Parameter
+    /// - `other` - Any type `T` that can be convert into [VarByteString](struct.VarByteString.html)
+    /// 
+    /// # Return
+    /// An number of characters where there's common prefix between itself and other. 
+    /// The index is exclusive thus the prefix is within following range `0..index`
+    pub fn prefix<T>(&self, other: T) -> usize where Self: From<T> {
+        let other = Self::from(other);
+        self.gaps_bytes().zip(other.gaps_bytes()).take_while(|(lhs, rhs)| 
+            lhs.0 == rhs.0 && lhs.1 == rhs.1
+        ).count()
+    }
+
+    /// Check if this string start with other given string.
+    /// Return `true` if it is.
+    /// 
+    /// This is a subset operation of [prefix](struct.VarByteString.html#method.prefix)
+    /// where entire other string must be prefix of this object.
+    pub fn starts_with<T>(&self, other: T) -> bool where Self: From<T> {
+        let other = Self::from(other);
+        self.gaps_bytes().zip(other.gaps_bytes()).take_while(|(lhs, rhs)| 
+            lhs.0 == rhs.0 && lhs.1 == rhs.1
+        ).count() == other.sign.len()
+    }
 }
 
 /// Add a way to convert back this object into `String`
@@ -439,6 +466,18 @@ impl<'a> Into<String> for VarByteString {
             result.push(c);
         });
         result
+    }
+}
+
+/// Specialize implementation of `PartialEq` by comparing sign bytes first.
+/// It is more efficient than comparing absolute value of gap first as there is many more byte
+/// to compare.
+impl PartialEq for VarByteString {
+    /// It compare with &str by encodes other string into variable gap bytes then compare it to self.
+    fn eq(&self, other: &Self) -> bool {
+        // It is much cheaper to compare sign bit as whole byte when
+        // we want to compare every bit flag.
+        self.sign.as_slice() == other.sign.as_slice() && self.buffer.as_slice() == other.buffer.as_slice()
     }
 }
 
@@ -787,6 +826,8 @@ mod tests {
         let vbs = VarByteString::from(s);
         assert_eq!(vbs, s);
         assert_ne!(vbs, not);
+        assert_ne!(vbs, VarByteString::from(not));
+        assert_eq!(vbs, VarByteString::from(s));
     }
 
     #[test]
@@ -820,5 +861,27 @@ mod tests {
         let mut hm = std::collections::HashMap::new();
         hm.insert(encoded.clone(), 1);
         assert_eq!(hm.get(&encoded), Some(&1));
+    }
+
+    #[test]
+    fn prefix() {
+        let first = "abcdefg";
+        let second = "abcxyz";
+        let encoded = VarByteString::from(first);
+        assert_eq!(encoded.prefix(second), 3);
+        let third = "xyz";
+        assert_eq!(encoded.prefix(third), 0);
+        let forth = "";
+        assert_eq!(encoded.prefix(forth), 0);
+        let thai_encoded = VarByteString::from("กรุงเทพฯ");
+        assert_eq!(thai_encoded.prefix(first), 0);
+        assert_eq!(thai_encoded.prefix("กรุงเทพมหานคร"), 7);
+    }
+
+    #[test]
+    fn empty() {
+        let empty = "";
+        let encoded = VarByteString::from(empty);
+        assert_eq!(encoded, "");
     }
 }
