@@ -21,9 +21,9 @@
 //! ```
 
 #[cfg(feature="serialize")]
-use bitvec_serde::{order::Lsb0, vec::BitVec};
+use bitvec_serde::{order::Lsb0, slice::BitSlice, vec::BitVec};
 #[cfg(not(feature="serialize"))]
-use bitvec::{order::Lsb0, vec::BitVec};
+use bitvec::{order::Lsb0, slice::BitSlice, vec::BitVec};
 use smallvec::SmallVec;
 
 #[cfg(feature="serialize")]
@@ -359,6 +359,52 @@ impl VarByteString {
     #[inline]
     pub fn size(&self) -> usize {
         (self.sign_len() / 8) + 1 + self.buffer_len() + core::mem::size_of::<BitVec<Lsb0, u8>>() + core::mem::size_of::<Vec<u8>>()
+    }
+    /// Get a slice of byte representation of gaps of given character index.
+    /// The slice is mostly useless as the value of bytes slice has no meaningless.
+    /// It is useful only in some specific case where you need to split a bits/bytes as a whole 
+    /// to for bits/bytes level manipulation such as incremental [VarBytString](struct.VarByteString.html) 
+    /// comparison. This can happen if you split the [VarBytString](struct.VarByteString.html) to
+    /// store it in some kind of data structure. For example, `Graph`, `Trie`, `Tree`, etc.
+    pub fn raw_slice<R>(&self, range: R) -> (&BitSlice<Lsb0, u8>, &[u8]) where R: core::ops::RangeBounds<usize> {
+        let start = match range.start_bound() {
+            core::ops::Bound::Included(s) => *s,
+            core::ops::Bound::Excluded(s) => *s + 1,
+            core::ops::Bound::Unbounded => 0
+        };
+        let end = match range.end_bound() {
+            core::ops::Bound::Included(e) => *e + 1,
+            core::ops::Bound::Excluded(e) => *e,
+            core::ops::Bound::Unbounded => 0
+        };
+        assert!(start < self.sign_len(), "Index out of bound. Start is greater than number of characters");
+        assert!(end < self.sign_len(), "Index out of bound. End is greater than number of characters");
+
+        let mut buf_start = 0;
+
+        for b in &self.buffer {
+            if *b > 128 {
+                buf_start += 1;
+
+                if buf_start == start {
+                    break
+                }
+            }
+        }
+
+        let mut buf_end = buf_start;
+
+        for b in &self.buffer[buf_start..] {
+            if *b > 128 {
+                buf_end += 1;
+
+                if buf_end == end {
+                    break
+                }
+            }
+        }
+
+        (&self.sign[start..end], &self.buffer[buf_start..buf_end])
     }
     // pub fn sub_str<R>(&self, range: R) -> VarByteString where R: core::ops::RangeBounds<usize> {
     //     let start = match range.start_bound() {
