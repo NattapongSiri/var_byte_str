@@ -109,3 +109,6 @@ let mut hm = HashMap::new();
 hm.insert(encoded.clone(), 1);
 assert_eq!(hm.get(&encoded), Some(&1));
 ```
+
+# Breaking changes
+Starting version 0.2.0, instead of simply `derive(Hash)` on `VarByteString`, it's now manually implement by using a byte level of a `sign` collection. Prior version relying on `BitVec` implementation of Hash which require a conversion for each individual bit into byte before hashing. The new implementation should be considered safe as it is taking into account of the `gap` value as well. This implementation should help improve performance on very large string. This change might break other app/lib that depends on hash value of the `VarByteString`

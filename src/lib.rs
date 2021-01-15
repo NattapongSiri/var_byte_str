@@ -334,7 +334,7 @@ pub struct VarByteString {
 /// 
 /// See [module documentation](index.html) for more detail
 #[cfg(not(feature="serialize"))]
-#[derive(Clone, Debug, Eq, Hash)]
+#[derive(Clone, Debug, Eq)]
 pub struct VarByteString {
     buffer: Vec<u8>,
     sign: BitVec<Lsb0, u8>
@@ -613,6 +613,21 @@ impl<S> core::cmp::PartialOrd<S> for VarByteString where S: core::borrow::Borrow
             }
         }
         Some(last_cmp)
+    }
+}
+
+/// Implement hashing by using entire byte block of `BitVec`. 
+/// This will have little impact on small string but it'd help improve
+/// performance on large string.
+/// 
+/// It assume that byte slice of `BitVec` return all the bytes as well as
+/// the last byte is zero padded.
+impl core::hash::Hash for VarByteString {
+    fn hash<H>(&self, hasher: &mut H) where H: core::hash::Hasher {
+        self.sign.as_slice().iter().for_each(|b| {
+            hasher.write_u8(*b)
+        });
+        self.buffer.hash(hasher);
     }
 }
 
