@@ -810,6 +810,9 @@ impl<'a> core::iter::ExactSizeIterator for GapsBytes<'a> {
     }
 }
 
+/// Implement lower level control of borrowing 
+pub mod raw;
+
 #[cfg(test)]
 mod tests {
     use super::*;
